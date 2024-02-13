@@ -28,7 +28,10 @@ struct fileData *getFileDataFromFilePath(const char *filePath);
  * @param content The file content.
  * @return fileData struct
  */
-struct fileData *initializeFileDataStruct(int fileNameLength, const char *fileName, long contentLength, const char *content);
+struct fileData *initializeFileDataStruct(int fileNameLength,
+                                          const char *fileName,
+                                          long contentLength,
+                                          const char *content);
 
 /**
  * @brief Prints a fileData struct to the console.
@@ -43,4 +46,4 @@ void printFileDataStruct(const struct fileData *fileData);
  */
 void appendTextToFile(const char *filePath, const char *text);
 
-#endif    // FILETOOLS_H
+#endif // FILETOOLS_H

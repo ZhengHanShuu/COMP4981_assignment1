@@ -11,4 +11,4 @@
  */
 void sigintHandler(int sig_num);
 
-#endif    // ASSIGNMENT1_TEST_SIGINTHANDLER_H
+#endif // ASSIGNMENT1_TEST_SIGINTHANDLER_H

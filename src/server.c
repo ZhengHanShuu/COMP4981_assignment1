@@ -1,5 +1,3 @@
-// temp save server.c
-
 #include "../include/server.h"
 #include "../include/fileTools.h"
 #include "../include/httpRequest.h"
@@ -17,140 +15,117 @@
 #include <unistd.h>
 
 #define MAX_BUFFER_SIZE 1024
-// #define STATUS_INTERNAL_SERVER_ERR 500
-//  #define STATUS_OK 200
 #define STATUS_RES_CREATED 201
-// todo handle the different cases in the response :: 404, 504, etc
-// todo re-comment code for more clarity
-// todo break down functions into smaller functions to pinpoint errors, etc
-// todo move functions to appropriate modules
-// todo implement read fully --> wait until all bits are read (wait until end of
-// req \r\n\r\n for reading)
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static volatile sig_atomic_t exit_flag = 0;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static struct pollfd fds[SOMAXCONN];
 
-void server(void)
-{
-    printf("SERVER\n");
+void server(void) { printf("SERVER\n"); }
+
+static int set_nonblocking(int sockfd) {
+  int flags = fcntl(sockfd, F_GETFL, 0);
+  if (flags == -1) {
+    perror("fcntl F_GETFL");
+    return -1;
+  }
+  if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
+    perror("fcntl F_SETFL O_NONBLOCK");
+    return -1;
+  }
+  return 0;
 }
 
-static int set_nonblocking(int sockfd)
-{
-    int flags = fcntl(sockfd, F_GETFL, 0);
-    if(flags == -1)
-    {
-        perror("fcntl F_GETFL");
-        return -1;
-    }
-    if(fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
-    {
-        perror("fcntl F_SETFL O_NONBLOCK");
-        return -1;
-    }
+int server_setup(char *passedServerInfo[]) {
+  struct serverInformation newServer;
+  struct clientInformation clients[SOMAXCONN];
+  int numClients;
+  // server setup
+  newServer.ip = passedServerInfo[0];
+  newServer.port = passedServerInfo[1];
+  // socket
+  newServer.fd = socket_create();
+  if (set_nonblocking(newServer.fd) == -1) {
+    perror("set_nonblocking failed");
+    close(newServer.fd);
     return 0;
+  }
+  // bind
+  if (socket_bind(newServer)) {
+    perror("Invalid bind");
+    return -1;
+  }
+  start_listen(newServer.fd);
+
+  fds[0].fd = newServer.fd;
+  fds[0].events = POLLIN;
+  numClients = 1; // Number of clients (starting with the server itself)
+
+  handle_connection(newServer.fd, clients, &numClients);
+
+  server_close(newServer);
+  return 0;
 }
 
-int server_setup(char *passedServerInfo[])
-{
-    struct serverInformation newServer;
-    struct clientInformation clients[SOMAXCONN];
-    int                      numClients;
-    // sigaction --> close
-    // server setup
-    newServer.ip   = passedServerInfo[0];
-    newServer.port = passedServerInfo[1];
-    // socket
-    newServer.fd = socket_create();
-    if(set_nonblocking(newServer.fd) == -1)
-    {
-        perror("set_nonblocking failed");
-        close(newServer.fd);
-        return 0;
-    }
-    // bind
-    socket_bind(newServer);
-    // listen <-- io mult
-    start_listen(newServer.fd);
-
-    // Initialize the main server socket in the pollfd array
-    fds[0].fd     = newServer.fd;
-    fds[0].events = POLLIN;
-    numClients    = 1;    // Number of clients (starting with the server itself)
-
-    handle_connection(newServer.fd, clients, &numClients);
-
-    server_close(newServer);
-    return 0;
-}
-
-// to set up server:
-
-int socket_create(void)
-{
-    int serverSocket;
-    // serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+int socket_create(void) {
+  int serverSocket;
+  // serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 #ifdef SOCK_CLOEXEC
-    serverSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  serverSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 #else
-    serverSocket = socket(AF_INET, SOCK_STREAM, 0);    // NOLINT(android-cloexec-socket)
+  serverSocket =
+      socket(AF_INET, SOCK_STREAM, 0); // NOLINT(android-cloexec-socket)
 #endif
-    if(serverSocket == -1)
-    {
-        perror("Socket create failed");
-        exit(EXIT_FAILURE);
-    }
-    return serverSocket;
+  if (serverSocket == -1) {
+    perror("Socket create failed");
+    exit(EXIT_FAILURE);
+  }
+  return serverSocket;
 }
 
-int socket_bind(struct serverInformation activeServer)
-{
-    struct sockaddr_in server_address;
-    int                port;
-    char              *endptr;
-    const int          decimalBase = 10;
+int socket_bind(struct serverInformation activeServer) {
+  struct sockaddr_in server_address;
+  int port;
+  char *endptr;
+  const int decimalBase = 10;
 
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sin_family = AF_INET;
+  memset(&server_address, 0, sizeof(server_address));
+  server_address.sin_family = AF_INET;
 
-    if(inet_pton(AF_INET, activeServer.ip, &server_address.sin_addr) <= 0)
-    {
-        perror("Invalid IP address");
-        return -1;
-    }
+  if (inet_pton(AF_INET, activeServer.ip, &server_address.sin_addr) <= 0) {
+    perror("Invalid IP address");
+    return -1;
+  }
 
-    port = (int)strtol(activeServer.port, &endptr, decimalBase);
+  port = (int)strtol(activeServer.port, &endptr, decimalBase);
 
-    if(*endptr != '\0' && *endptr != '\n')
-    {
-        perror("Invalid port number");
-        return -1;
-    }
+  if (*endptr != '\0' && *endptr != '\n') {
+    perror("Invalid port number");
+    return -1;
+  }
 
-    server_address.sin_port = htons((uint16_t)port);
+  server_address.sin_port = htons((uint16_t)port);
 
-    if(bind(activeServer.fd, (struct sockaddr *)&server_address, sizeof(server_address)) == -1)
-    {
-        perror("Bind failed");
-        exit(EXIT_FAILURE);
-    }
+  if (bind(activeServer.fd, (struct sockaddr *)&server_address,
+           sizeof(server_address)) == -1) {
+    perror("Bind failed");
+    exit(EXIT_FAILURE);
+  }
 
-    printf("Socket bound successfully to %s:%s.\n", activeServer.ip, activeServer.port);
+  printf("Socket bound successfully to %s:%s.\n", activeServer.ip,
+         activeServer.port);
 
-    return 0;
+  return 0;
 }
 
-void start_listen(int server_fd)
-{
-    if(listen(server_fd, SOMAXCONN) == -1)
-    {
-        perror("listen failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-    printf("Listening for incoming connections...\n");
+void start_listen(int server_fd) {
+  if (listen(server_fd, SOMAXCONN) == -1) {
+    perror("listen failed");
+    close(server_fd);
+    exit(EXIT_FAILURE);
+  }
+  printf("Listening for incoming connections...\n");
 }
 
 /**
@@ -161,173 +136,134 @@ void start_listen(int server_fd)
  * @param numClients number of clients
  * @return 1 on success
  */
-int handle_connection(int server_fd, struct clientInformation clients[], int *numClients)
-{
-    TokenAndStr        requestFirstLine;
-    StringArray        requestNewlineSplit;
-    StringArray        contentLengthLineSplit;
-    int                postContentLength;
-    const int          defaultPostBodyLine = 7;
-    const HTTPRequest *httpRequest;
-    char              *data;
+int handle_connection(int server_fd, struct clientInformation clients[],
+                      int *numClients) {
+  TokenAndStr requestFirstLine;
+  StringArray requestNewlineSplit;
+  StringArray contentLengthLineSplit;
+  int postContentLength;
+  const int defaultPostBodyLine = 7;
+  const HTTPRequest *httpRequest;
+  char *data;
 
-    // To silence the errors :/
-    httpRequest = NULL;
-    printHTTPRequestStruct(httpRequest);
+  httpRequest = NULL;
+  printHTTPRequestStruct(httpRequest);
 
-    while(!exit_flag)
-    {
-        int activity;
-        for(int i = 1; i < *numClients; i++)
-        {
-            fds[i].fd     = clients[i].fd;
-            fds[i].events = POLLIN;
-        }
-
-        // poll used for IO multiplexing
-        activity = poll(fds, (nfds_t)*numClients, -1);    // -1 means wait indefinitely
-
-        if(activity == -1)
-        {
-            perror("poll failed");
-            exit(EXIT_FAILURE);
-        }
-
-        // check for new connection on the main server socket
-        if(fds[0].revents & POLLIN)
-        {
-            int client_fd = accept(server_fd, NULL, NULL);
-            if(client_fd == -1)
-            {
-                perror("accept failed");
-                // Handle error if needed
-            }
-            else
-            {
-                // Set client socket to non-blocking mode
-                if(set_nonblocking(client_fd) == -1)
-                {
-                    perror("set_nonblocking failed");
-                    // Handle error if needed
-                    close(client_fd);
-                }
-                else
-                {
-                    printf("New client: adding to array\n");
-                    clients[*numClients].fd = client_fd;
-                    // TODO add to client struct here when ready using
-                    // clients[*numClients]
-                    (*numClients)++;
-
-                    fds[*numClients - 1].fd = client_fd;
-
-                    // waits for next input from any client
-                    fds[*numClients - 1].events = POLLIN;
-                }
-            }
-        }
-
-        // check if any client is ready to send a response to
-        for(int i = 1; i < *numClients; ++i)
-        {
-            if(fds[i].revents & POLLIN)
-            {
-                char    buffer[MAX_BUFFER_SIZE];
-                ssize_t bytesRead;
-                printf("Client ready; working..\n");
-                // read in req
-                bytesRead = recv(clients[i].fd, buffer, sizeof(buffer), 0);
-                if(bytesRead == 0)
-                {
-                    printf("Client disconnected: %d\n", clients[i].fd);
-                    close(clients[i].fd);
-                    for(int j = i; j < *numClients - 1; ++j)
-                    {
-                        clients[j] = clients[j + 1];
-                        fds[j]     = fds[j + 1];
-                    }
-                    (*numClients)--;
-                }
-                else if(bytesRead < 0)
-                {
-                    perror("recv failed");
-                }
-                else
-                {
-                    // todo implement read fully (wait until \r\n\r\n)
-                    printf("\n\n"
-                           "----- START CLIENT REQUEST ----- "
-                           "\n\n"
-                           "%s\n"
-                           "----- END CLIENT REQUEST ----- \n"
-                           "\n\n",
-                           buffer);
-
-                    // Get only the first line.
-                    requestFirstLine = getFirstToken(buffer, "\n");
-
-                    printf("Request first line: %s\n", requestFirstLine.token);
-
-                    httpRequest = initializeHTTPRequestFromString(requestFirstLine.token);
-                    printHTTPRequestStruct(httpRequest);
-
-                    // handle request
-                    if(strcmp(httpRequest->method, "GET") == 0)
-                    {
-                        get_req_response(clients[i].fd, httpRequest->path);
-                    }
-                    else if(strcmp(httpRequest->method, "HEAD") == 0)
-                    {
-                        head_req_response(clients[i].fd, httpRequest->path);
-                    }
-                    else if(strcmp(httpRequest->method, "POST") == 0)
-                    {
-                        // Tokenize the string based on newlines.
-                        requestNewlineSplit = tokenizeString(buffer, "\n");
-
-                        // Get the content length.
-                        contentLengthLineSplit = tokenizeString(requestNewlineSplit.strings[4], " ");
-                        // NOLINTNEXTLINE
-                        postContentLength = atoi(contentLengthLineSplit.strings[1]);
-
-                        printf("\npostContentLength: %d\n", postContentLength);
-
-                        // Allocate memory for the data plus a newline and null terminator.
-                        data = (char *)malloc((unsigned)postContentLength + 2);    // Adjusted size
-                        if(!data)
-                        {
-                            // Handle allocation failure
-                            perror("Failed to allocate memory");
-                            exit(EXIT_FAILURE);
-                        }
-
-                        memset(data, 0,
-                               (unsigned)postContentLength + 2);    // Initialize allocated memory to zero
-
-                        // Assuming defaultPostBodyLine is the correct index for the body
-                        // content
-                        strncpy(data, requestNewlineSplit.strings[defaultPostBodyLine], (unsigned)postContentLength);
-
-                        data[postContentLength]     = '\n';    // Add newline character at the end of the content
-                        data[postContentLength + 1] = '\0';    // Explicitly null-terminate the string
-
-                        printf("\nData: %s\n", data);
-
-                        // Get the content length.
-                        post_req_response(clients[i].fd, httpRequest->path, data);
-                        free(data);
-                    }
-                    else
-                    {
-                        // default err handling
-                        perror("Unknown method type");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-            }
-        }
+  while (!exit_flag) {
+    int activity;
+    for (int i = 1; i < *numClients; i++) {
+      fds[i].fd = clients[i].fd;
+      fds[i].events = POLLIN;
     }
-    return 1;
+
+    // poll used for IO multiplexing
+    activity = poll(fds, (nfds_t)*numClients, -1); // -1 means wait indefinitely
+
+    if (activity == -1) {
+      perror("poll failed");
+      exit(EXIT_FAILURE);
+    }
+
+    // check for new connection on the main server socket
+    if (fds[0].revents & POLLIN) {
+      int client_fd = accept(server_fd, NULL, NULL);
+      if (client_fd == -1) {
+        perror("accept failed");
+      } else {
+        if (set_nonblocking(client_fd) == -1) {
+          perror("set_nonblocking failed");
+          close(client_fd);
+        } else {
+          printf("New client: adding to array\n");
+          clients[*numClients].fd = client_fd;
+          (*numClients)++;
+
+          fds[*numClients - 1].fd = client_fd;
+
+          // waits for next input from any client
+          fds[*numClients - 1].events = POLLIN;
+        }
+      }
+    }
+
+    // check if any client is ready to send a response to
+    for (int i = 1; i < *numClients; ++i) {
+      if (fds[i].revents & POLLIN) {
+        char buffer[MAX_BUFFER_SIZE];
+        ssize_t bytesRead;
+        printf("Client ready; working..\n");
+        // read in req
+        bytesRead = recv(clients[i].fd, buffer, sizeof(buffer), 0);
+        if (bytesRead == 0) {
+          printf("Client disconnected: %d\n", clients[i].fd);
+          close(clients[i].fd);
+          for (int j = i; j < *numClients - 1; ++j) {
+            clients[j] = clients[j + 1];
+            fds[j] = fds[j + 1];
+          }
+          (*numClients)--;
+        } else if (bytesRead < 0) {
+          perror("recv failed");
+        } else {
+          printf("\n\n"
+                 "----- START CLIENT REQUEST ----- "
+                 "\n\n"
+                 "%s\n"
+                 "----- END CLIENT REQUEST ----- \n"
+                 "\n\n",
+                 buffer);
+
+          requestFirstLine = getFirstToken(buffer, "\n");
+
+          printf("Request first line: %s\n", requestFirstLine.token);
+
+          httpRequest = initializeHTTPRequestFromString(requestFirstLine.token);
+          printHTTPRequestStruct(httpRequest);
+
+          // handle request
+          if (strcmp(httpRequest->method, "GET") == 0) {
+            get_req_response(clients[i].fd, httpRequest->path);
+          } else if (strcmp(httpRequest->method, "HEAD") == 0) {
+            head_req_response(clients[i].fd, httpRequest->path);
+          } else if (strcmp(httpRequest->method, "POST") == 0) {
+            requestNewlineSplit = tokenizeString(buffer, "\n");
+
+            contentLengthLineSplit =
+                tokenizeString(requestNewlineSplit.strings[4], " ");
+            // NOLINTNEXTLINE
+            postContentLength = atoi(contentLengthLineSplit.strings[1]);
+
+            printf("\npostContentLength: %d\n", postContentLength);
+
+            data = (char *)malloc((unsigned)postContentLength +
+                                  2); // Adjusted size
+            if (!data) {
+              perror("Failed to allocate memory");
+              exit(EXIT_FAILURE);
+            }
+
+            memset(data, 0, (unsigned)postContentLength + 2);
+
+            strncpy(data, requestNewlineSplit.strings[defaultPostBodyLine],
+                    (unsigned)postContentLength);
+
+            data[postContentLength] = '\n';
+            data[postContentLength + 1] = '\0';
+
+            printf("\nData: %s\n", data);
+
+            post_req_response(clients[i].fd, httpRequest->path, data);
+            free(data);
+          } else {
+            // default err handling
+            perror("Unknown method type");
+            exit(EXIT_FAILURE);
+          }
+        }
+      }
+    }
+  }
+  return 1;
 }
 
 /**
@@ -335,15 +271,13 @@ int handle_connection(int server_fd, struct clientInformation clients[], int *nu
  * @param activeServer server socket fd
  * @return 0 if success
  */
-int server_close(struct serverInformation activeServer)
-{
-    if(close(activeServer.fd) == -1)
-    {
-        perror("close failed");
-        exit(EXIT_FAILURE);
-    }
-    printf("Closing the server.\n");
-    return 0;
+int server_close(struct serverInformation activeServer) {
+  if (close(activeServer.fd) == -1) {
+    perror("close failed");
+    exit(EXIT_FAILURE);
+  }
+  printf("Closing the server.\n");
+  return 0;
 }
 
 /**
@@ -351,15 +285,13 @@ int server_close(struct serverInformation activeServer)
  * @param activeClient client socket fd
  * @return 0 if success
  */
-int client_close(int activeClient)
-{
-    if(close(activeClient) == -1)
-    {
-        perror("close failed");
-        exit(EXIT_FAILURE);
-    }
-    printf("Closing the client.\n");
-    return 0;
+int client_close(int activeClient) {
+  if (close(activeClient) == -1) {
+    perror("close failed");
+    exit(EXIT_FAILURE);
+  }
+  printf("Closing the client.\n");
+  return 0;
 }
 
 /**
@@ -371,19 +303,15 @@ int client_close(int activeClient)
  * @return 0 if default, 1 if request
  */
 // todo move to server.h, remove static
-static int checkIfRoot(const char *filePath, char *verified_path)
-{
-    if(strcmp(filePath, "/") == 0)
-    {
-        printf("Requesting default file path...");
-        strcpy(verified_path, "server_files/html/index.html");
-    }
-    else
-    {
-        strcpy(verified_path, filePath);
-        return 1;
-    }
-    return 0;
+static int checkIfRoot(const char *filePath, char *verified_path) {
+  if (strcmp(filePath, "/") == 0) {
+    printf("Requesting default file path...");
+    strcpy(verified_path, "server_files/html/index.html");
+  } else {
+    strcpy(verified_path, filePath);
+    return 1;
+  }
+  return 0;
 }
 
 /**
@@ -394,31 +322,30 @@ static int checkIfRoot(const char *filePath, char *verified_path)
  * @return 0 if success
  */
 // todo add status codes and handle each situation based on that
-int send_response_resource(int client_socket, const char *content, size_t content_length)
-{
-    char   response[MAX_BUFFER_SIZE];
-    size_t total_sent = 0;
-    snprintf(response, MAX_BUFFER_SIZE, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", content_length);
+int send_response_resource(int client_socket, const char *content,
+                           size_t content_length) {
+  char response[MAX_BUFFER_SIZE];
+  size_t total_sent = 0;
+  snprintf(response, MAX_BUFFER_SIZE,
+           "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", content_length);
 
-    // send the response header
-    if(send(client_socket, response, strlen(response), 0) == -1)
-    {
-        perror("Error sending response header");
-        return -1;
-    }
+  // send the response header
+  if (send(client_socket, response, strlen(response), 0) == -1) {
+    perror("Error sending response header");
+    return -1;
+  }
 
-    // send content
-    while(total_sent < content_length)
-    {
-        ssize_t sent = send(client_socket, content + total_sent, content_length - total_sent, 0);
-        if(sent == -1)
-        {
-            perror("Error sending content");
-            return -1;
-        }
-        total_sent += (size_t)sent;
+  // send content
+  while (total_sent < content_length) {
+    ssize_t sent = send(client_socket, content + total_sent,
+                        content_length - total_sent, 0);
+    if (sent == -1) {
+      perror("Error sending content");
+      return -1;
     }
-    return 0;
+    total_sent += (size_t)sent;
+  }
+  return 0;
 }
 
 /**
@@ -427,19 +354,18 @@ int send_response_resource(int client_socket, const char *content, size_t conten
  * @param content_length the length of the content in the requested resource
  * @return 0 if success
  */ // todo <-- additional status codes
-int send_response_head(int client_socket, size_t content_length)
-{
-    char response[MAX_BUFFER_SIZE];
-    snprintf(response, MAX_BUFFER_SIZE, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", content_length);
+int send_response_head(int client_socket, size_t content_length) {
+  char response[MAX_BUFFER_SIZE];
+  snprintf(response, MAX_BUFFER_SIZE,
+           "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", content_length);
 
-    // Send the response header
-    if(send(client_socket, response, strlen(response), 0) == -1)
-    {
-        perror("Error sending response header");
-        return -1;
-    }
+  // Send the response header
+  if (send(client_socket, response, strlen(response), 0) == -1) {
+    perror("Error sending response header");
+    return -1;
+  }
 
-    return 0;
+  return 0;
 }
 
 /**
@@ -448,181 +374,148 @@ int send_response_head(int client_socket, size_t content_length)
  * @param client_socket client socket that sends the req
  * @return 0 if success
  */
-// todo break down into smaller functions
-int get_req_response(int client_socket, const char *filePath)
-{
-    char  *filePathWithDot;
-    FILE  *resource_file;
-    long   totalBytesRead;
-    char  *file_content;
-    char   verified_path[MAX_BUFFER_SIZE];
-    size_t bytesRead;
+int get_req_response(int client_socket, const char *filePath) {
+  char *filePathWithDot;
+  FILE *resource_file;
+  long totalBytesRead;
+  char *file_content;
+  char verified_path[MAX_BUFFER_SIZE];
+  size_t bytesRead;
 
-    // todo shift all get/head functions into a single function to port to both
-    // check if filePath is root
-    checkIfRoot(filePath, verified_path);
+  // check if filePath is root
+  checkIfRoot(filePath, verified_path);
 
-    // append "./" to filePathWithDot
-    filePathWithDot = addCharacterToStart(verified_path, "./");
-    if(filePathWithDot == NULL)
-    {
-        perror(". character not added");
-        return -1;
-    }
+  // append "./" to filePathWithDot
+  filePathWithDot = addCharacterToStart(verified_path, "./");
+  if (filePathWithDot == NULL) {
+    perror(". character not added");
+    return -1;
+  }
 
-    // open file
-    resource_file = fopen(filePathWithDot, "rbe");
-    if(resource_file == NULL)
-    {
-        fprintf(stderr, "Error opening resource file: %s\n", filePathWithDot);
-        free(filePathWithDot);
-        return -1;
-    }
+  // open file
+  resource_file = fopen(filePathWithDot, "rbe");
+  if (resource_file == NULL) {
+    fprintf(stderr, "Error opening resource file: %s\n", filePathWithDot);
     free(filePathWithDot);
+    return -1;
+  }
+  free(filePathWithDot);
 
-    // move cursor to the end of the file, read the position in bytes, reset
-    // cursor
-    fseek(resource_file, 0, SEEK_END);
-    totalBytesRead = ftell(resource_file);
-    fseek(resource_file, 0, SEEK_SET);
+  // move cursor to the end of the file, read the position in bytes, reset
+  fseek(resource_file, 0, SEEK_END);
+  totalBytesRead = ftell(resource_file);
+  fseek(resource_file, 0, SEEK_SET);
 
-    // allocate memory
-    file_content = (char *)malloc((unsigned long)(totalBytesRead + 1));
-    if(file_content == NULL)
-    {
-        perror("Error allocating memory");
-        fclose(resource_file);
-        return -1;
-    }
-
-    // read into buffer
-    bytesRead = fread(file_content, 1, (unsigned long)totalBytesRead, resource_file);
-    if((long)bytesRead != totalBytesRead)
-    {
-        perror("Error reading HTML file");
-        free(file_content);
-        fclose(resource_file);
-        return -1;
-    }
+  // allocate memory
+  file_content = (char *)malloc((unsigned long)(totalBytesRead + 1));
+  if (file_content == NULL) {
+    perror("Error allocating memory");
     fclose(resource_file);
+    return -1;
+  }
 
-    // create response and send
-    if(send_response_resource(client_socket, file_content, bytesRead) == -1)
-    {
-        free(file_content);
-        return -1;
-    }
-
-    // free resources on success
+  // read into buffer
+  bytesRead =
+      fread(file_content, 1, (unsigned long)totalBytesRead, resource_file);
+  if ((long)bytesRead != totalBytesRead) {
+    perror("Error reading HTML file");
     free(file_content);
-    return 0;
+    fclose(resource_file);
+    return -1;
+  }
+  fclose(resource_file);
+
+  // create response and send
+  if (send_response_resource(client_socket, file_content, bytesRead) == -1) {
+    free(file_content);
+    return -1;
+  }
+
+  // free resources on success
+  free(file_content);
+  return 0;
 }
 
 /**
  * Function to handle a HEAD request and send back the header
  * @return 0 if success
  */
-int head_req_response(int client_socket, const char *filePath)
-{
-    /*
-     * Steps:
-     * Check if root
-     * filePathWithDot
-     * open file (check if exists)
-     * close file
-     * send response based on this
-     */
-    char *filePathWithDot;
-    FILE *resource_file;
-    char  verified_path[MAX_BUFFER_SIZE];
-    long  totalBytesRead;
+int head_req_response(int client_socket, const char *filePath) {
+  char *filePathWithDot;
+  FILE *resource_file;
+  char verified_path[MAX_BUFFER_SIZE];
+  long totalBytesRead;
 
-    // check if filePath is root
-    checkIfRoot(filePath, verified_path);
+  // check if filePath is root
+  checkIfRoot(filePath, verified_path);
 
-    // append "." to filePathWithDot
-    filePathWithDot = addCharacterToStart(verified_path, "./");
-    if(filePathWithDot == NULL)
-    {
-        perror(". character not added");
-        return -1;
-    }
+  // append "." to filePathWithDot
+  filePathWithDot = addCharacterToStart(verified_path, "./");
+  if (filePathWithDot == NULL) {
+    perror(". character not added");
+    return -1;
+  }
 
-    // open file
-    resource_file = fopen(filePathWithDot, "rbe");
-    free(filePathWithDot);
-    if(resource_file == NULL)
-    {
-        perror("Error opening resource file");
-        return -1;
-    }
+  // open file
+  resource_file = fopen(filePathWithDot, "rbe");
+  free(filePathWithDot);
+  if (resource_file == NULL) {
+    perror("Error opening resource file");
+    return -1;
+  }
 
-    fseek(resource_file, 0, SEEK_END);
-    totalBytesRead = ftell(resource_file);
-    fseek(resource_file, 0, SEEK_SET);
+  fseek(resource_file, 0, SEEK_END);
+  totalBytesRead = ftell(resource_file);
+  fseek(resource_file, 0, SEEK_SET);
 
-    // send header
-    send_response_head(client_socket, (size_t)totalBytesRead);
+  // send header
+  send_response_head(client_socket, (size_t)totalBytesRead);
 
-    // close file
-    fclose(resource_file);
+  // close file
+  fclose(resource_file);
 
-    return 0;
+  return 0;
 }
 
-int send_response_post(int client_socket, const char *resPath)
-{
-    char response[MAX_BUFFER_SIZE];
+int send_response_post(int client_socket, const char *resPath) {
+  char response[MAX_BUFFER_SIZE];
 
-    if(resPath != NULL)
-    {
-        int status_code = STATUS_RES_CREATED;
-        snprintf(response, MAX_BUFFER_SIZE, "HTTP/1.1 %d Created\r\nLocation: %s\r\n\r\n", status_code, resPath);
-    }
-    else
-    {
-        return -1;
-    }
+  if (resPath != NULL) {
+    int status_code = STATUS_RES_CREATED;
+    snprintf(response, MAX_BUFFER_SIZE,
+             "HTTP/1.1 %d Created\r\nLocation: %s\r\n\r\n", status_code,
+             resPath);
+  } else {
+    return -1;
+  }
 
-    if(send(client_socket, response, strlen(response), 0) == -1)
-    {
-        perror("Error sending response header");
-        return -1;
-    }
-    printf("Sent over response!\n");
+  if (send(client_socket, response, strlen(response), 0) == -1) {
+    perror("Error sending response header");
+    return -1;
+  }
+  printf("Sent over response!\n");
 
-    return 0;
+  return 0;
 }
 
 /**
  * Function to handle post requests
  * @return wheee
  */
-int post_req_response(int client_socket, const char *filePath, const char *data)
-{
-    char       *duped = strdup(data);
-    const char *modifiedFilePath;
-    modifiedFilePath = addCharacterToStart(filePath, "./server_files");
-    /*
-     * Steps:
-     * Check if the data is valid
-     * Open db
-     * Save data
-     * Close db
-     */
-    //  dbm_open("./database/test");
+int post_req_response(int client_socket, const char *filePath,
+                      const char *data) {
+  char *duped = strdup(data);
+  const char *modifiedFilePath;
+  modifiedFilePath = addCharacterToStart(filePath, "./server_files");
 
-    printf("\nData: %s\n", duped);
-    printf("\nModified file path: %s\n", modifiedFilePath);
+  printf("\nData: %s\n", duped);
+  printf("\nModified file path: %s\n", modifiedFilePath);
 
-    // TODO: Get the path to the file from the client socket.
+  appendTextToFile(modifiedFilePath, data);
 
-    // Append the given text to the file path.
-    appendTextToFile(modifiedFilePath, data);
-
-    printf("Sending res back to client\n");
-    send_response_post(client_socket, modifiedFilePath);
-    free(duped);
-    close(client_socket);
-    return 0;
+  printf("Sending res back to client\n");
+  send_response_post(client_socket, modifiedFilePath);
+  free(duped);
+  close(client_socket);
+  return 0;
 }

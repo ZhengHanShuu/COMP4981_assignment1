@@ -12,13 +12,12 @@
  * @brief Struct that holds both a token and the original string.
  *
  */
-typedef struct
-{
-    /** @brief The token. */
-    char *token;
+typedef struct {
+  /** @brief The token. */
+  char *token;
 
-    /** @brief The original string */
-    char *originalStr;
+  /** @brief The original string */
+  char *originalStr;
 
 } TokenAndStr;
 
@@ -28,17 +27,16 @@ typedef struct
  *
  * Helps with tokenization.
  */
-typedef struct
-{
-    /** @brief Pointer to an array of strings. */
-    char **strings;
+typedef struct {
+  /** @brief Pointer to an array of strings. */
+  char **strings;
 
-    /** @brief Number of strings. */
-    unsigned int numStrings;
+  /** @brief Number of strings. */
+  unsigned int numStrings;
 
-    /** @brief Int array containing the lengths of the strings in the string
-     * array. */
-    unsigned int *stringLengths;
+  /** @brief Int array containing the lengths of the strings in the string
+   * array. */
+  unsigned int *stringLengths;
 
 } StringArray;
 
@@ -85,4 +83,4 @@ unsigned int getNumberOfTokens(const char *string, const char *delim);
  */
 char *addCharacterToStart(const char *original, const char *toAdd);
 
-#endif    // STRINGTOOLS_H
+#endif // STRINGTOOLS_H

@@ -10,16 +10,15 @@
 /**
  * @brief Standard struct for HTTP requests.
  */
-typedef struct
-{
-    /** @brief The method, e.g. GET, POST, HEAD */
-    char *method;
+typedef struct {
+  /** @brief The method, e.g. GET, POST, HEAD */
+  char *method;
 
-    /** @brief The requested file path. */
-    char *path;
+  /** @brief The requested file path. */
+  char *path;
 
-    /** @brief The protocol, e.g. HTTP/1.1 */
-    char *protocol;
+  /** @brief The protocol, e.g. HTTP/1.1 */
+  char *protocol;
 } HTTPRequest;
 
 /**
@@ -36,7 +35,8 @@ HTTPRequest *initializeHTTPRequestFromString(const char *string);
  * @param protocol The protocol, e.g. 1.0, 1.1
  * @return struct HTTPRequest
  */
-HTTPRequest initializeHTTPRequest(const char *method, const char *path, const char *protocol);
+HTTPRequest initializeHTTPRequest(const char *method, const char *path,
+                                  const char *protocol);
 
 /**
  * @brief Strips the given string of return characters.
@@ -59,4 +59,4 @@ bool isValidHTTPMethod(const char *method);
  */
 void printHTTPRequestStruct(const HTTPRequest *request);
 
-#endif    // HTTPREQUEST_H
+#endif // HTTPREQUEST_H
